@@ -1,0 +1,4 @@
+mesop
+google-genai
+python-pptx
+python-docx
