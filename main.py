@@ -1,3 +1,9 @@
+import os
+# Patch IO immediately to prevent Windows console crashes
+# Patch IO immediately to prevent Windows console crashes
+from utils import suppress_console_output
+suppress_console_output()
+
 import base64
 import mesop as me
 import mesop.labs as mel
@@ -5,6 +11,8 @@ from dataclasses import field
 from dotenv import load_dotenv
 from ai_engine import analyze_document
 from slide_engine import create_pptx
+# from utils import safe_print # No longer needed explicitly, but good to keep import if used elsewhere
+
 
 load_dotenv()
 
@@ -48,7 +56,7 @@ def handle_upload(event: me.UploadEvent):
     state.uploaded_filename = file.name
     
     # reset logs/status
-    state.logs = [f"Đã tải lên: {file.name}"]
+    state.logs = [f"Đã tải lên: {file.name}", "System: Console Output Suppressed (v3)"]
     state.processing_status = "ready"
     state.error_message = ""
 
@@ -108,9 +116,13 @@ def generate_slides(e: me.ClickEvent):
         if state.user_instructions:
             state.logs.append(f"Hướng dẫn người dùng: {state.user_instructions[:50]}...")
 
+        # Explicitly pass API Key to avoid env var scope issues in sub-modules
+        api_key_env = os.environ.get("GOOGLE_API_KEY")
+        
         slide_json = analyze_document(
             state.uploaded_file_bytes, 
             state.uploaded_mime_type, 
+            api_key=api_key_env,
             detail_level=detail_mode,
             user_instructions=state.user_instructions
         )
@@ -136,9 +148,7 @@ def generate_slides(e: me.ClickEvent):
         state.processing_status = "error"
         state.error_message = str(ex)
         state.logs.append(f"Lỗi: {str(ex)}")
-        # Safe print for Windows consoles
-        from utils import safe_print
-        safe_print(f"Error: {str(ex)}")
+
         yield
 
 

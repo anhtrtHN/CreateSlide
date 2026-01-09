@@ -2,7 +2,7 @@ import io
 from typing import Dict, Any
 from pptx import Presentation
 from pptx.util import Pt, Cm
-from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN, MSO_ANCHOR
 from pptx.dml.color import RGBColor
 import re
 
@@ -82,23 +82,42 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
             slide.shapes.title.text = clean_title
             
             # --- Layout Refinement: Strict Title Geometry ---
-            # Force Title to top area to prevent wandering
+            # Heuristic for Title Height (1 vs 2 lines)
+            # Assumption: 36pt font, ~25 chars per line is safe estimate for width?
+            # Slide width ~33.8cm (16:9). Width - 2cm margins = ~31.8cm.
+            # 36pt ~ 1.27cm height? Char width avg ~0.6cm?
+            # 31.8cm / 0.6 = ~50 chars per line.
+            # Let's say breakpoint is 45 chars.
+            
+            title_text_len = len(clean_title)
+            is_multiline_title = title_text_len > 45
+            
+            # Dynamic Height & Gap
+            title_height = Cm(3.5) if is_multiline_title else Cm(2.0)
+            
             slide.shapes.title.top = Cm(0.5)
             slide.shapes.title.left = Cm(1.0)
             slide.shapes.title.width = prs.slide_width - Cm(2.0)
-            slide.shapes.title.height = Cm(3.5) # Increased to ~3.5cm to safely fit 2 lines of 36pt
-            # Note: width/left centered with 1cm margin on each side
+            slide.shapes.title.height = title_height
             
             # Title Font Styling (Request: 36pt, Top Align)
             if slide.shapes.title.text_frame:
-                slide.shapes.title.text_frame.paragraphs[0].font.size = Pt(36)
-                # Ensure vertical alignment is TOP (though default often is middle)
-                # We need to import PP_ALIGN if we want to force alignment, 
-                # but standard resizing usually works. Let's rely on geometry.
-
-        # Set Content (Body)
-        # ... (finding body_shape logic remains) ...
-
+                tf_title = slide.shapes.title.text_frame
+                tf_title.word_wrap = True 
+                tf_title.auto_size = MSO_AUTO_SIZE.NONE
+                # Key Fix: Vertical Alignment TOP
+                tf_title.vertical_anchor = MSO_ANCHOR.TOP
+                
+                if tf_title.paragraphs:
+                    p = tf_title.paragraphs[0]
+                    p.font.size = Pt(36)
+                    p.font.bold = True
+                    p.alignment = PP_ALIGN.LEFT # Usually titles are left or center. Left looks pro.
+                    
+                    if not is_multiline_title:
+                         # Extra hint: if absolute top is needed, check margins.
+                         tf_title.margin_top = 0
+                         
         # Set Content (Body)
         # Find the first non-title placeholder
         body_shape = None
@@ -113,11 +132,14 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
 
         if body_shape and hasattr(body_shape, "text_frame"):
             # --- Layout Refinement: Adjust Margins & Top ---
-            # Explicit Safety Zones to prevent overlap
             
             margin_side = Cm(1.5)
-            # Body Top = Title Bottom (0.5+3.5=4.0) + Gap 1.5cm = 5.5cm
-            margin_top = Cm(5.5) 
+            # Body Top = Title Top (0.5) + Title Height + Small Gap (0.2)
+            # Dynamic Calculation
+            title_bottom = Cm(0.5) + title_height
+            gap = Cm(0.2) 
+            margin_top = title_bottom + gap
+            
             margin_bottom = Cm(1.0)
             
             body_shape.left = margin_side
@@ -128,15 +150,42 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
             tf = body_shape.text_frame
             tf.word_wrap = True
             
-            # --- Native Auto-Fit Strategy ---
-            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            # --- Hybrid Strategy: Manual Calc + Native Auto-Fit ---
+            # 1. We calculate a safe "base" font size manually so the slide looks good immediately on open.
+            # 2. We set TEXT_TO_FIT_SHAPE so PowerPoint handles future edits/overflows gracefully.
             
-            content = slide_data.get("content", [])
-            # ... (content normalization) ...
+            # Constants for Heuristic
+            MAX_FONT_SIZE = 24
+            MIN_FONT_SIZE = 10
+            
+            # Estimate Capacity:
+            # Box dimensions: ~22cm wide x ~8cm high.
+            # At 24pt, line height ~30pt. Height 8cm=226pt -> ~7 lines.
+            # Width 22cm=623pt. Avg char width ~11pt -> ~56 chars/line.
+            # Total Chars @ 24pt = 7 * 56 = ~392 chars.
+            # Let's be conservative: 350 chars for 24pt.
+            # UPDATED: User reported overflow. Drastically reducing logical capacity for safer scaling.
+            BASE_CAPACITY_AT_24PT = 300 
+            
+            total_text_len = sum(len(str(c)) for c in slide_data.get("content", []))
+            
+            if total_text_len <= BASE_CAPACITY_AT_24PT:
+                font_size_pt = MAX_FONT_SIZE
+            else:
+                # Scaling formula
+                import math
+                ratio = BASE_CAPACITY_AT_24PT / total_text_len
+                scale_factor = math.sqrt(ratio)
+                font_size_pt = max(min(MAX_FONT_SIZE * scale_factor, MAX_FONT_SIZE), MIN_FONT_SIZE)
+            
+            # Apply calculated font size AND set AutoFit
+            tf.word_wrap = True
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE # Re-enable Native Auto-Fit
             
             # Clear default paragraph
             tf.clear()
             
+            content = slide_data.get("content", [])
             for i, item in enumerate(content):
                 # Reuse the first paragraph if it exists
                 if i == 0 and len(tf.paragraphs) == 1:
@@ -145,8 +194,7 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
                     p = tf.add_paragraph()
                 p.level = 0
                 
-                # Use explicit run, but allow Auto-Fit to override
-                # Parse markdown bold syntax
+                # Parse markdown
                 parts = re.split(r'(\*\*.*?\*\*)', str(item))
                 
                 for part in parts:
@@ -162,12 +210,13 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
                     else:
                         run.text = part
                         
-                    # Set Base Font to 20pt (User Max Request)
-                    # Auto-fit will scale DOWN from here if needed.
-                    run.font.size = Pt(20) 
+                    run.font.size = Pt(font_size_pt) # Set the safe start size
                 
-                p.space_before = Pt(6)
-                p.space_after = Pt(6)
+                # Adjust spacing based on size
+                # Smaller text needs less spacing
+                spacing = max(3, font_size_pt * 0.3)
+                p.space_before = Pt(spacing)
+                p.space_after = Pt(spacing)
         
         # Set Speaker Notes
         

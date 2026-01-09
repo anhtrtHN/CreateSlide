@@ -4,3 +4,4 @@ python-pptx
 python-docx
 EbookLib
 beautifulsoup4
+python-dotenv

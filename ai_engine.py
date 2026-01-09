@@ -8,18 +8,101 @@ import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import warnings
+import ast
+import re
 
 # Suppress ebooklib warnings about future features if any
 warnings.filterwarnings("ignore", category=UserWarning, module='ebooklib')
+
+def robust_json_parse(text):
+    """
+    Parses JSON robustly, handling Markdown code blocks, single quotes (Python dicts),
+    and common syntax errors.
+    """
+    # 1. Clean Markdown code blocks
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    # 2. Try standard JSON first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Try AST literal_eval (handles single quotes/Python dicts)
+    try:
+        # ast.literal_eval is safe for standard python literals
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        pass
+
+    # 4. Try finding JSON content within the text (substring search)
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        subset_text = match.group(0)
+        try:
+            return json.loads(subset_text)
+        except:
+            try:
+                return ast.literal_eval(subset_text)
+            except:
+                pass
+        # Update text to the found subset for further repair attempts
+        text = subset_text
+
+    # 5. Fix common issues: Trailing commas
+    # Remove trailing comma before ] or }
+    text_fixed = re.sub(r',\s*([\]}])', r'\1', text)
+    try:
+        return json.loads(text_fixed)
+    except:
+        pass
+    
+    try:
+        return ast.literal_eval(text_fixed)
+    except:
+        pass
+        
+    # 6. Aggressive fallback for unquoted keys (JavaScript style)
+    # This is risky but useful for basic keys. 
+    # { title: "Foo" } -> { "title": "Foo" }
+    try:
+        # Regex to quote unquoted keys
+        # Find word followed by colon, not in quotes
+        # This is a simplified regex and might break complex strings
+        text_quoted = re.sub(r'(\w+):', r'"\1":', text_fixed)
+        return json.loads(text_quoted)
+    except:
+        pass
+
+    raise ValueError(f"Failed to parse JSON/Dict from response. Raw text: {text}")
+
 
 SYSTEM_INSTRUCTION = """
 Bạn là chuyên gia thiết kế bài thuyết trình chuyên nghiệp. Nhiệm vụ của bạn là trích xuất nội dung từ tài liệu và tạo cấu trúc JSON cho bài thuyết trình.
 
 Yêu cầu QUAN TRỌNG:
 1. TIÊU ĐỀ NGẮN GỌN: Tiêu đề mỗi slide phải cực kỳ ngắn gọn, KHÔNG QUÁ 10 TỪ. Tránh tiêu đề 2 dòng.
-2. NỘI DUNG VỪA PHẢI (QUAN TRỌNG): Mỗi slide chỉ chứa tối đa 5 bullet point.
-   - NẾU NỘI DUNG DÀI: BẮT BUỘC phải tách thành nhiều slide (Ví dụ: "Chiến lược (Phần 1)", "Chiến lược (Phần 2)"). Đừng cố nhồi nhét vào 1 slide.
-3. CÚ PHÁP: Sử dụng markdown `**từ khóa**` để nhấn mạnh.
+2. NỘI DUNG VỪA PHẢI (QUAN TRỌNG): 
+   - Mỗi slide chứa khoảng 5-7 ý chính.
+   - ƯU TIÊN TUYỆT ĐỐI: **Viết câu đơn, trọn vẹn ý nghĩa, nhưng vẫn ngắn gọn.**
+   - Đảm bảo mỗi ý đều truyền tải được thông điệp rõ ràng, không viết cụt lủn (như chỉ viết từ khóa).
+   - Có thể dùng động từ mạnh ở đầu câu hoặc câu khẳng định.
+   - **VÍ DỤ PHONG CÁCH MONG MUỐN (HÃY BẮT CHƯỚC STYLE NÀY):**
+     + "Manifesting là một bài thực hành phát triển bản thân."
+     + "Giúp giải phóng toàn bộ tiềm năng bên trong bạn."
+     + "Yêu cầu thực hiện đồng thời cả 7 bước."
+     + "Mỗi ngày là một cơ hội để củng cố sức mạnh nội tại."
+     + "Bạn có quyền lựa chọn và kiến tạo cuộc sống tốt nhất."
+   - NẾU NỘI DUNG DÀI: BẮT BUỘC phải tách thành nhiều slide.
+3. CÚ PHÁP (BẮT BUỘC): Sử dụng markdown `**từ khóa**` để làm nổi bật (in đậm & màu) các ý quan trọng. Ít nhất 1-2 từ khóa mỗi dòng.
+   - **LƯU Ý ĐẶC BIỆT VỀ JSON**: KHÔNG sử dụng dấu ngoặc kép `"` bên trong nội dung văn bản (content) vì sẽ làm hỏng cấu trúc JSON. Hãy dùng dấu ngoặc đơn `'` hoặc escape `\"` nếu bắt buộc.
 4. NGÔN NGỮ: Chuyên nghiệp, trang trọng.
 
 JSON Schema bắt buộc:
@@ -261,31 +344,14 @@ def analyze_document(file_bytes: bytes, mime_type: str, api_key: str = None, det
              safe_print("All models failed. Returning friendly error.")
              raise ValueError("Hệ thống AI đang quá tải tạm thời. Vui lòng chờ 30 giây rồi thử lại (AI Overload).")
 
-        # Parse JSON with robust cleaning
         if not response.text:
             raise ValueError("Gemini không trả về nội dung.")
             
-        import re
-        text = response.text.strip()
-        
-        # 1. Try to find JSON block explicitly
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            text = match.group(0)
-            
         try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            # Fallback: Try strict cleaning for unescaped characters if needed
-            safe_print(f"JSON Parse Error: {e}")
-            safe_print(f"Raw Text: {response.text}") 
-            
-            # Attempt basic repair: remove trailing commas
-            text = re.sub(r',\s*([\]}])', r'\1', text)
-            try:
-                return json.loads(text)
-            except:
-                raise ValueError(f"Lỗi cú pháp JSON từ AI: {str(e)} - Check console logs API raw response.")
+            return robust_json_parse(response.text)
+        except Exception as e:
+            safe_print(f"JSON Parsing Failed: {e}")
+            raise ValueError(f"Lỗi đọc dữ liệu từ AI: {str(e)}")
 
     except Exception as e:
         # Catch-all for top level errors

@@ -1,4 +1,7 @@
-.env
 __pycache__/
-*.pyc
+*.log
+*.pptx
+nuclear_success.txt
+.env
+venv/
 .gemini/
