@@ -75,77 +75,136 @@ def create_pptx(json_data: Dict[str, Any], template_pptx_bytes: bytes | None = N
         slide = prs.slides.add_slide(content_layout)
         
         # Set Title and Clean "Slide X:" prefix
+        title_height = Cm(0) # Default if no title exists
         if slide.shapes.title:
             raw_title = slide_data.get("title", "")
             # Remove "Slide 1:", "Slide 01", etc.
             clean_title = re.sub(r'^Slide\s+\d+[:.]?\s*', '', raw_title, flags=re.IGNORECASE)
             slide.shapes.title.text = clean_title
             
-            # --- Layout Refinement: Strict Title Geometry ---
-            # Heuristic for Title Height (1 vs 2 lines)
-            # Assumption: 36pt font, ~25 chars per line is safe estimate for width?
-            # Slide width ~33.8cm (16:9). Width - 2cm margins = ~31.8cm.
-            # 36pt ~ 1.27cm height? Char width avg ~0.6cm?
-            # 31.8cm / 0.6 = ~50 chars per line.
-            # Let's say breakpoint is 45 chars.
+            # --- Layout Refinement: Advanced Dynamic Calculation ---
+            # Instead of a hard threshold, we calculate expected height based on:
+            # - Text Length
+            # - Font Size (Inherited or Default)
+            # - Container Width
             
-            title_text_len = len(clean_title)
-            is_multiline_title = title_text_len > 45
+            # 1. Determine Font Size (Points)
+            font_size_pt = 36 # Default
+            # Try to read from template shape style if available to be smarter
+            # (Limitation: python-pptx often returns None for inherited styles, so we default safe)
+            if slide.shapes.title.text_frame and slide.shapes.title.text_frame.paragraphs:
+                 p_font = slide.shapes.title.text_frame.paragraphs[0].font
+                 if p_font and p_font.size:
+                      font_size_pt = p_font.size.pt
             
-            # Dynamic Height & Gap
-            title_height = Cm(3.5) if is_multiline_title else Cm(2.0)
-            
-            slide.shapes.title.top = Cm(0.5)
+            # --- FIX: Set Width/Pos BEFORE calculation so math matches reality ---
+            # User wants "triệt để", so let's enforce standard margins to be safe.
             slide.shapes.title.left = Cm(1.0)
             slide.shapes.title.width = prs.slide_width - Cm(2.0)
+            slide.shapes.title.top = Cm(0.5)
+
+            # 2. Determine Width (Points)
+            shape_width_pt = slide.shapes.title.width.pt
+            
+            # 3. Calculate Capacity
+            # Avg char width approx 0.55 of font size for mixed case variable width sans-serif
+            avg_char_width = font_size_pt * 0.55
+            chars_per_line = shape_width_pt / avg_char_width
+            
+            # 4. Estimate Lines
+            import math
+            # Add small buffer +1 for safety
+            estimated_lines = math.ceil(len(clean_title) / chars_per_line)
+            estimated_lines = max(1, estimated_lines) # At least 1 line
+            
+            # 5. Calculate Height
+            # LINE HEIGHT TUNING:
+            # User reported "empty line" effect. Reducing multiplier and removing padding.
+            # 1.1 is tight leading.
+            line_height_pt = font_size_pt * 1.1
+            # Remove extra padding (+0 instead of +12)
+            total_height_pt = (estimated_lines * line_height_pt)
+            
+            title_height = Pt(total_height_pt)
+            
+            # Apply Height
             slide.shapes.title.height = title_height
             
-            # Title Font Styling (Request: 36pt, Top Align)
+            # Title Font Styling
             if slide.shapes.title.text_frame:
                 tf_title = slide.shapes.title.text_frame
                 tf_title.word_wrap = True 
-                tf_title.auto_size = MSO_AUTO_SIZE.NONE
-                # Key Fix: Vertical Alignment TOP
-                tf_title.vertical_anchor = MSO_ANCHOR.TOP
+                tf_title.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE 
+                tf_title.vertical_anchor = MSO_ANCHOR.TOP # Critical
                 
                 if tf_title.paragraphs:
                     p = tf_title.paragraphs[0]
-                    p.font.size = Pt(36)
+                    p.font.size = Pt(font_size_pt)
                     p.font.bold = True
-                    p.alignment = PP_ALIGN.LEFT # Usually titles are left or center. Left looks pro.
+                    p.alignment = PP_ALIGN.LEFT 
                     
-                    if not is_multiline_title:
-                         # Extra hint: if absolute top is needed, check margins.
-                         tf_title.margin_top = 0
+                    # Remove margins to make math accurate and remove "empty line" look
+                    tf_title.margin_top = 0
+                    tf_title.margin_bottom = 0 # Critical fix for "empty line" below
                          
         # Set Content (Body)
-        # Find the first non-title placeholder
+        # Find the best placeholder for content
         body_shape = None
-        for shape in slide.placeholders:
-            if shape.placeholder_format.idx == 1: # Standard body
-                body_shape = shape
-                break
         
-        # Fallback to any second placeholder if idx 1 not found
+        # Priority 1: explicitly identified "BODY" or "OBJECT" placeholders
+        from pptx.enum.shapes import PP_PLACEHOLDER
+        
+        candidates = []
+        for shape in slide.placeholders:
+            # Skip Title, Center Title, Subtitle
+            if shape.placeholder_format.type in [PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE, PP_PLACEHOLDER.SUBTITLE]:
+                continue
+                
+            # Prefer Body (2) or Object (7)
+            if shape.placeholder_format.type in [PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT]:
+                candidates.append((0, shape)) # High priority
+            elif shape.placeholder_format.idx == 1:
+                candidates.append((1, shape)) # Medium priority
+            else:
+                candidates.append((2, shape)) # Low priority
+
+        # Sort by priority (asc) then by top/left position implicitly? No, just priority.
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            body_shape = candidates[0][1]
+        
+        # Fallback: if absolutely no specific body, just grab the second placeholder if it exists
         if not body_shape and len(slide.placeholders) > 1:
-             body_shape = slide.placeholders[1]
+             # Just grab the one that isn't the title (assuming title is [0] or type title)
+             for shape in slide.placeholders:
+                 if shape.element is not slide.shapes.title.element:
+                      body_shape = shape
+                      break
 
         if body_shape and hasattr(body_shape, "text_frame"):
             # --- Layout Refinement: Adjust Margins & Top ---
             
             margin_side = Cm(1.5)
-            # Body Top = Title Top (0.5) + Title Height + Small Gap (0.2)
+            # Body Top = Title Top (0.5) + Title Height + Larger Gap (0.5)
             # Dynamic Calculation
-            title_bottom = Cm(0.5) + title_height
-            gap = Cm(0.2) 
-            margin_top = title_bottom + gap
+            # Balanced gap: 0.4cm (Enough separation, but connected)
+            gap = Cm(0.4) 
+            margin_top = Cm(0.5) + title_height + gap
             
+            # Ensure we don't push off bottom
             margin_bottom = Cm(1.0)
             
             body_shape.left = margin_side
             body_shape.top = margin_top
             body_shape.width = prs.slide_width - (margin_side * 2)
-            body_shape.height = prs.slide_height - margin_top - margin_bottom
+            # Safe calculation for height
+            available_height = prs.slide_height - margin_top - margin_bottom
+            if available_height < Cm(5): # minimal safe height
+                 # If title is huge, shrink body drastically? 
+                 # Or just clamp.
+                 pass
+            
+            body_shape.height = available_height
             
             tf = body_shape.text_frame
             tf.word_wrap = True

@@ -1,71 +1,81 @@
 # SlideGenius - AI Presentation Generator
 
-SlideGenius là ứng dụng web sử dụng AI (Google Gemini) để tự động tạo bài thuyết trình PowerPoint (.pptx) từ các tài liệu nguồn như PDF, Word (.docx), hoặc Ebook (.epub).
+SlideGenius is an intelligent web application that leverages Google Gemini AI to automatically generate professional PowerPoint presentations (`.pptx`) from various source documents such as PDF, Word (`.docx`), or EBooks (`.epub`).
 
-Ứng dụng được xây dựng bằng **Python** và **Mesop**, với giao diện người dùng hiện đại và thân thiện.
+Built with **Python** and **Mesop**, it features a modern and user-friendly interface.
 
-## Yêu Cầu Hệ Thống
+## System Requirements
 
-- **Hệ điều hành**: Windows 10/11, macOS, hoặc Linux.
-- **Python**: Phiên bản 3.10 trở lên (Khuyên dùng Python 3.12).
-- **Google API Key**: Cần có API Key từ [Google AI Studio](https://aistudio.google.com/).
+- **Operating System**: Windows 10/11, macOS, or Linux.
+- **Python**: Version 3.10 or higher (Python 3.12 Recommended).
+- **Google API Key**: Required from [Google AI Studio](https://aistudio.google.com/).
 
-## Hướng Dẫn Cài Đặt
+## Installation Guide
 
-### 1. Cài đặt Python
+### 1. Install Python
 
-Nếu chưa có Python, hãy tải và cài đặt từ trang chủ [python.org](https://www.python.org/downloads/) hoặc qua Microsoft Store.
-**Lưu ý quan trọng**: Khi cài đặt trên Windows, hãy tích vào ô **"Add Python to PATH"**.
+If not already installed, download Python from [python.org](https://www.python.org/downloads/) or via the Microsoft Store.
+**Important**: On Windows, check the box **"Add Python to PATH"** during installation.
 
-### 2. Tải Mã Nguồn
+### 2. Download Source Code
 
-Tải về thư mục dự án này và mở terminal (Command Prompt hoặc PowerShell) tại thư mục đó.
+Clone this repository or download the source code and open a terminal (Command Prompt or PowerShell) in the project directory.
 
-### 3. Cài Đặt Thư Viện
+### 3. Install Dependencies
 
-Chạy lệnh sau để cài đặt các thư viện cần thiết:
+Run the following command to install the required libraries:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Nếu bạn gặp lỗi "pip not recognized", hãy thử: `python -m pip install -r requirements.txt` hoặc `py -m pip install -r requirements.txt`.
+If you encounter a "pip not recognized" error, try: `python -m pip install -r requirements.txt` or `py -m pip install -r requirements.txt`.
 
-## Cấu Hình
+## Configuration
 
-Bạn cần thiết lập Google API Key để ứng dụng có thể kết nối với AI.
+You must configure your Google API Key for the application to connect to the AI model.
 
-1.  Tạo một file có tên `.env` trong cùng thư mục với `main.py` (nếu chưa có).
-2.  Mở file `.env` bằng Notepad hoặc trình soạn thảo code.
-3.  Thêm dòng sau vào file, thay thế `YOUR_API_KEY` bằng key thực của bạn:
+1.  Create a file named `.env` in the same directory as `main.py` (if it doesn't exist).
+2.  Open `.env` with Notepad or a code editor.
+3.  Add the following line, replacing `YOUR_API_KEY` with your actual key:
 
 ```env
 GOOGLE_API_KEY=YOUR_API_KEY_HERE
 ```
-*(Thay thế mã trên bằng mã API của chính bạn)*
+*(Replace the code above with your own API key)*
 
-## Chạy Ứng Dụng
+## Running the Application
 
-Sau khi cài đặt xong, khởi chạy ứng dụng bằng lệnh:
+After installation, launch the application using the command:
 
 ```bash
 python main.py
 ```
-Hoặc nếu dùng Mesop trực tiếp:
+Or if using Mesop directly:
 ```bash
 mesop main.py
 ```
 
-Ứng dụng sẽ khởi động và hiển thị đường dẫn truy cập, thường là:
+The application will start and display an access URL, typically:
 **http://localhost:32123**
 
-Hãy mở đường dẫn này trên trình duyệt web để bắt đầu sử dụng.
+Open this URL in your web browser to start using the tool.
 
-## Hướng Dẫn Sử Dụng
+## User Guide
 
-1.  **Input Documents**: Tải lên file tài liệu bạn muốn chuyển thành slide (PDF, DOCX, EPUB).
-2.  **Slide Template (Tùy chọn)**: Tải lên file mẫu PowerPoint (.pptx) nếu bạn muốn dùng giao diện riêng.
-3.  **Topic (Tùy chọn)**: Nhập chủ đề để AI định hướng nội dung tốt hơn.
-4.  **Chế độ**: Chọn "Chi tiết (Deep Dive)" nếu muốn nội dung sâu, nhiều slide hơn.
-5.  Nhấn **Generate Slides** và đợi AI xử lý.
-6.  Khi hoàn tất, nhấn nút **Download PowerPoint** để tải về.
+1.  **Input Documents**: Upload the document you want to convert into slides (PDF, DOCX, EPUB).
+2.  **Slide Template (Optional)**: Upload a PowerPoint template file (`.pptx`) if you want to use a custom design.
+3.  **Topic (Optional)**: Enter a topic to help the AI better orient the content.
+4.  **Mode**: Select "Chi tiết (Deep Dive)" if you want deeper content and more slides.
+5.  Click **Generate Slides** and wait for the AI to process.
+6.  Once complete, click the **Download PowerPoint** button to download the file.
+
+## Features
+
+- **Multi-Format Support**: Handles PDF, DOCX, and EPUB files.
+- **Smart Layout**: Automatically calculates title heights and spacing for a balanced look.
+- **Resilient AI**: Includes smart fallback mechanisms (Retry with exponential backoff, model switching) to handle API rate limits.
+- **Custom Templates**: fully supports user-provided PowerPoint templates.
+
+---
+*For Vietnamese instructions, please refer to [README_VI.md](README_VI.md).*
