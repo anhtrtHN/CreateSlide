@@ -109,7 +109,8 @@ def generate_summary(e: me.ClickEvent):
         summary_data = summarize_document(
             state.uploaded_file_bytes, 
             state.uploaded_mime_type, 
-            api_key=api_key_env
+            api_key=api_key_env,
+            user_instructions=state.user_instructions
         )
         
         state.logs.append("Tóm tắt hoàn tất. Đang tạo file PDF...")

@@ -78,7 +78,7 @@ def robust_json_parse(text):
             return json.loads(match.group(0))
         raise
 
-def summarize_document(file_bytes: bytes, mime_type: str, api_key: str = None) -> dict:
+def summarize_document(file_bytes: bytes, mime_type: str, api_key: str = None, user_instructions: str = "") -> dict:
     """
     Summarizes the document using Gemini.
     Returns a dict with title, overview, key_points, conclusion.
@@ -90,14 +90,20 @@ def summarize_document(file_bytes: bytes, mime_type: str, api_key: str = None) -
     client = genai.Client(api_key=key)
     parts = []
     
+    # Construct base prompt
+    base_prompt = "Hãy tóm tắt tài liệu này theo cấu trúc JSON đã yêu cầu."
+    if user_instructions and user_instructions.strip():
+        base_prompt += f"\n\nLƯU Ý CỦA NGƯỜI DÙNG (Cực kỳ quan trọng, hãy tuân thủ): {user_instructions}"
+
     # Check if PDF (Multimodal) or Text
     if mime_type == "application/pdf":
         parts.append(types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"))
-        parts.append(types.Part.from_text(text="Hãy tóm tắt tài liệu này theo cấu trúc JSON đã yêu cầu."))
+        parts.append(types.Part.from_text(text=base_prompt))
     else:
         # Load text for DOCX/EPUB
         text_content = load_document(file_bytes, mime_type)
-        parts.append(types.Part.from_text(text=f"Nội dung tài liệu:\n{text_content}\n\nHãy tóm tắt tài liệu này theo cấu trúc JSON đã yêu cầu."))
+        full_prompt = f"Nội dung tài liệu:\n{text_content}\n\n{base_prompt}"
+        parts.append(types.Part.from_text(text=full_prompt))
 
     models_to_try = [
         "gemini-flash-latest",
@@ -144,31 +150,53 @@ def save_summary_to_pdf(summary_data: dict, output_filename: str = "summary.pdf"
     
     # Margin
     margin = 50
-    y = height - margin
+    header_margin = 50
+    y = height - header_margin
     
     # Font Settings
     title_font = 'Arial' if HAS_UNICODE_FONT else 'Helvetica'
     body_font = 'Arial' if HAS_UNICODE_FONT else 'Helvetica'
     
+    def draw_footer():
+        c.saveState()
+        c.setFont(body_font, 10)
+        # Footer is at bottom, say y=30
+        footer_y = 30
+        # Copyright Text (Center Aligned looks better with Page Num on right, but user asked for Copyright ending symbol)
+        # New Request: © 2026 Truong Tuan Anh | Document Summary
+        c.drawString(margin, footer_y, "\u00A9 2026 Truong Tuan Anh | Document Summary")
+        
+        # Page Number (Right Aligned)
+        page_num_text = f"Page {c.getPageNumber()}"
+        c.drawRightString(width - margin, footer_y, page_num_text)
+        c.restoreState()
+
+    def check_page_break(current_y, font_name, font_size):
+        # Check if we are too close to bottom (margin + footer space)
+        # Footer is at 30, so let's stop at 60
+        if current_y < 80: 
+            draw_footer()
+            c.showPage()
+            current_y = height - header_margin
+            c.setFont(font_name, font_size)
+        return current_y
+
     # 1. Title
     c.setFont(title_font, 20)
     title = summary_data.get("title", "Document Summary")
     
-    # Handling wrapping for title
     text_width = width - 2 * margin
     title_lines = simpleSplit(title, title_font, 20, text_width)
     
     for line in title_lines:
-        if y < margin:
-            c.showPage()
-            y = height - margin
-            c.setFont(title_font, 20)
+        y = check_page_break(y, title_font, 20)
         c.drawString(margin, y, line)
-        y -= 30 # Line height for title
+        y -= 30 
         
-    y -= 20 # Spacing after title
+    y -= 20 
     
     # 2. Overview
+    y = check_page_break(y, title_font, 14)
     c.setFont(title_font, 14)
     c.drawString(margin, y, "Tổng quan")
     y -= 25
@@ -176,25 +204,16 @@ def save_summary_to_pdf(summary_data: dict, output_filename: str = "summary.pdf"
     c.setFont(body_font, 12)
     overview = summary_data.get("overview", "")
     
-    # Wrap text
-    text_width = width - 2 * margin
     lines = simpleSplit(overview, body_font, 12, text_width)
-    
     for line in lines:
-        if y < margin:
-            c.showPage()
-            y = height - margin
-            c.setFont(body_font, 12)
+        y = check_page_break(y, body_font, 12)
         c.drawString(margin, y, line)
         y -= 20
         
     y -= 20
     
     # 3. Key Points
-    if y < margin + 50:
-        c.showPage()
-        y = height - margin
-        
+    y = check_page_break(y, title_font, 14)
     c.setFont(title_font, 14)
     c.drawString(margin, y, "Điểm chính")
     y -= 25
@@ -205,21 +224,15 @@ def save_summary_to_pdf(summary_data: dict, output_filename: str = "summary.pdf"
         bullet_point = f"- {point}"
         lines = simpleSplit(bullet_point, body_font, 12, text_width)
         for line in lines:
-            if y < margin:
-                c.showPage()
-                y = height - margin
-                c.setFont(body_font, 12)
+            y = check_page_break(y, body_font, 12)
             c.drawString(margin, y, line)
             y -= 20
-        y -= 10 # Spacing between points
+        y -= 10 
 
     y -= 20
     
     # 4. Conclusion
-    if y < margin + 50:
-        c.showPage()
-        y = height - margin
-
+    y = check_page_break(y, title_font, 14)
     c.setFont(title_font, 14)
     c.drawString(margin, y, "Kết luận")
     y -= 25
@@ -228,12 +241,11 @@ def save_summary_to_pdf(summary_data: dict, output_filename: str = "summary.pdf"
     conclusion = summary_data.get("conclusion", "")
     lines = simpleSplit(conclusion, body_font, 12, text_width)
     for line in lines:
-        if y < margin:
-            c.showPage()
-            y = height - margin
-            c.setFont(body_font, 12)
+        y = check_page_break(y, body_font, 12)
         c.drawString(margin, y, line)
         y -= 20
 
+    # Draw footer for the last page
+    draw_footer()
     c.save()
     return os.path.abspath(output_filename)
