@@ -2,7 +2,7 @@ import os
 # Patch IO immediately to prevent Windows console crashes
 # Patch IO immediately to prevent Windows console crashes
 from utils import suppress_console_output
-suppress_console_output()
+# suppress_console_output()
 
 import base64
 import mesop as me
@@ -11,7 +11,7 @@ from dataclasses import field
 from dotenv import load_dotenv
 from ai_engine import analyze_document
 from slide_engine import create_pptx
-# from utils import safe_print # No longer needed explicitly, but good to keep import if used elsewhere
+from summarizer import summarize_document, save_summary_to_pdf
 
 
 load_dotenv()
@@ -36,6 +36,10 @@ class State:
     # Output Data
     pptx_filename: str = ""
     pptx_content_base64: str = ""
+    
+    # Summary Data
+    pdf_filename: str = ""
+    pdf_content_base64: str = ""
     
     # Detail Configuration
     is_detailed: bool = False
@@ -81,6 +85,71 @@ def on_detail_change(e: me.CheckboxChangeEvent):
 def handle_user_instruction(e: me.InputEvent):
     state = me.state(State)
     state.user_instructions = e.value
+
+
+
+def generate_summary(e: me.ClickEvent):
+    state = me.state(State)
+    
+    if not state.uploaded_file_bytes:
+        state.error_message = "Vui lòng tải lên file tài liệu trước."
+        return
+
+    state.processing_status = "analyzing_summary"
+    state.error_message = ""
+    
+    state.logs.append(f"Source Document: {state.uploaded_filename}")
+    state.logs.append("Đang tóm tắt tài liệu với Gemini...")
+    yield # Yield to update UI
+    
+    try:
+        # 1. Summarize
+        api_key_env = os.environ.get("GOOGLE_API_KEY")
+        
+        summary_data = summarize_document(
+            state.uploaded_file_bytes, 
+            state.uploaded_mime_type, 
+            api_key=api_key_env
+        )
+        
+        state.logs.append("Tóm tắt hoàn tất. Đang tạo file PDF...")
+        state.processing_status = "generating_pdf"
+        yield
+        
+        # 2. Generate PDF
+        # Use a temporary filename
+        import tempfile
+        original_name = state.uploaded_filename
+        name_no_ext = original_name.rsplit('.', 1)[0]
+        pdf_out_name = f"{name_no_ext}_summary.pdf"
+        
+        # We need a temp path for reportlab to write to
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp_path = tmp.name
+            
+        final_path = save_summary_to_pdf(summary_data, tmp_path)
+        
+        with open(final_path, "rb") as f:
+            pdf_bytes = f.read()
+            
+        state.pdf_content_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+        state.pdf_filename = pdf_out_name
+        
+        # Cleanup
+        try:
+             os.remove(final_path)
+        except:
+             pass
+
+        state.logs.append(f"Đã tạo xong file: {state.pdf_filename}")
+        state.processing_status = "summary_done"
+        yield
+
+    except Exception as ex:
+        state.processing_status = "error"
+        state.error_message = str(ex)
+        state.logs.append(f"Lỗi: {str(ex)}")
+        yield
 
 
 def generate_slides(e: me.ClickEvent):
@@ -332,19 +401,67 @@ def main_page():
 
                 # Generate Button
                 is_loading = state.processing_status in ["analyzing", "generating"]
-                me.button(
-                    "Generate Slides",
-                    on_click=generate_slides,
-                    type="flat",
-                    color="primary",
-                    disabled=is_loading or not state.uploaded_filename,
+                # Button Logic
+                is_disabled = is_loading or not state.uploaded_filename
+                btn_bg = "#e2e8f0" if is_disabled else "#2563eb"
+                btn_color = "#94a3b8" if is_disabled else "#000000"
+
+                with me.box(
+                    on_click=generate_slides if not is_disabled else None,
                     style=me.Style(
-                        width="100%", 
+                        width="100%",
                         padding=me.Padding.symmetric(vertical=16),
-                        font_size=16,
-                        margin=me.Margin(top=32), # Push to bottom
+                        margin=me.Margin(top=32),
+                        background=btn_bg,
+                        border_radius=8, # Make it look like a button
+                        cursor="not-allowed" if is_disabled else "pointer",
+                        display="flex",
+                        justify_content="center",
+                        align_items="center",
+                        box_shadow="0 2px 4px rgba(0,0,0,0.1)" if not is_disabled else "none",
                     )
-                )
+                ):
+                    me.text(
+                        "Generate Slides",
+                        style=me.Style(
+                            color=btn_color,
+                            font_size=16,
+                            font_weight="bold",
+                            text_align="center",
+                            z_index=10, # Force text to top
+                        )
+                    )
+                
+                # Summary Button Logic
+                su_bg = "transparent"
+                su_border = "#ea580c" if not is_disabled else "#fed7aa"
+                su_color = "#ea580c" if not is_disabled else "#fed7aa"
+                
+                with me.box(
+                    on_click=generate_summary if not is_disabled else None,
+                    style=me.Style(
+                        width="100%",
+                        padding=me.Padding.symmetric(vertical=16),
+                        margin=me.Margin(top=16),
+                        background=su_bg,
+                        border=me.Border.all(me.BorderSide(width=1, color=su_border)),
+                        border_radius=8,
+                        cursor="not-allowed" if is_disabled else "pointer",
+                        display="flex",
+                        justify_content="center",
+                        align_items="center",
+                    )
+                ):
+                   me.text(
+                        "Generate Summary (PDF)",
+                        style=me.Style(
+                            color=su_color,
+                            font_size=16,
+                            font_weight="bold",
+                            text_align="center",
+                            z_index=10,
+                        )
+                   )
 
             # --- Right Column: Output/Preview ---
             with me.box(
@@ -386,6 +503,16 @@ def main_page():
                          with me.box(style=me.Style(display="flex", align_items="center", gap=8, margin=me.Margin(top=16))):
                             me.progress_spinner(diameter=20, stroke_width=2)
                             me.text("Designing Slides...", style=me.Style(color="#7c3aed", font_weight=500))
+
+                    if state.processing_status == "analyzing_summary":
+                        with me.box(style=me.Style(display="flex", align_items="center", gap=8, margin=me.Margin(top=16))):
+                            me.progress_spinner(diameter=20, stroke_width=2)
+                            me.text("Summarizing...", style=me.Style(color="#ea580c", font_weight=500))
+
+                    if state.processing_status == "generating_pdf":
+                         with me.box(style=me.Style(display="flex", align_items="center", gap=8, margin=me.Margin(top=16))):
+                            me.progress_spinner(diameter=20, stroke_width=2)
+                            me.text("Creating PDF...", style=me.Style(color="#db2777", font_weight=500))
 
                 # Error Message
                 if state.error_message:
@@ -430,6 +557,39 @@ def main_page():
                         
                         me.button(
                             "Create Another",
+                            on_click=lambda e: setattr(state, "processing_status", "idle"),
+                            style=me.Style(margin=me.Margin(top=16)),
+                        )
+                
+                # Download Summary Section
+                if state.processing_status == "summary_done":
+                    with me.box(
+                        style=me.Style(
+                            background="#fff7ed",
+                            padding=me.Padding.all(24),
+                            border_radius=12,
+                            border=me.Border.all(me.BorderSide(width=1, color="#fdba74")),
+                            display="flex",
+                            flex_direction="column",
+                            align_items="center",
+                            gap=16,
+                            text_align="center"
+                        )
+                    ):
+                        me.icon("description", style=me.Style(color="#ea580c", font_size=48))
+                        me.text("Summary Ready!", style=me.Style(font_size=20, font_weight=600, color="#9a3412"))
+                        
+                        data_uri = f"data:application/pdf;base64,{state.pdf_content_base64}"
+                        me.html(
+                            f'<a href="{data_uri}" download="{state.pdf_filename}" '
+                            'style="display: inline-block; background-color: #ea580c; color: white; '
+                            'padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; font-family: Inter, sans-serif;">'
+                            'Download Summary PDF'
+                            '</a>'
+                        )
+                        
+                        me.button(
+                            "Start Over",
                             on_click=lambda e: setattr(state, "processing_status", "idle"),
                             style=me.Style(margin=me.Margin(top=16)),
                         )

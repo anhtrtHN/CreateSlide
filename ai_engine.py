@@ -140,75 +140,7 @@ JSON Schema bắt buộc:
 }
 """
 
-# ... (Previous code)
-
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Extracts text from a DOCX file bytes."""
-    try:
-        doc = docx.Document(io.BytesIO(file_bytes))
-        full_text = []
-        for para in doc.paragraphs:
-            full_text.append(para.text)
-        return '\n'.join(full_text)
-    except Exception as e:
-        raise ValueError(f"Lỗi khi đọc file DOCX: {str(e)}")
-
-def extract_text_from_epub(file_bytes: bytes) -> str:
-    """Extracts text from an EPUB file bytes."""
-    try:
-        # EbookLib requires a file path or a file-like object.
-        # However, epub.read_epub usually takes a path. 
-        # We save to a temp file or try to pass BytesIO if supported (often not fully).
-        # Workaround: Write bytes to a temporary file.
-        import tempfile
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-            
-        book = epub.read_epub(tmp_path)
-        full_text = []
-
-        # Import safe_print locally since it's not at top level
-        from utils import safe_print
-        items = list(book.get_items())
-        safe_print(f"EPUB Loaded. Total items: {len(items)}")
-        
-        for item in items:
-            # Check for document type OR generic HTML/XHTML content
-            # Some EPUBs mark chapters as ITEM_UNKNOWN or just don't set types correctly
-            is_doc = item.get_type() == ebooklib.ITEM_DOCUMENT
-            is_html = item.media_type and ('html' in item.media_type or 'xml' in item.media_type)
-            
-            if is_doc or is_html:
-                content = item.get_content()
-                if not content:
-                    continue
-                    
-                # safe_print(f"Processing item: {item.file_name} (Type: {item.get_type()})")
-                
-                # Use BS4 to strip HTML tags
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Use separator to prevent word mashing
-                text = soup.get_text(separator=' ', strip=True)
-                
-                # Only add meaningful chunks
-                if len(text) > 50:
-                    full_text.append(text)
-                
-        # Clean up temp file
-        try:
-            os.remove(tmp_path)
-        except:
-            pass
-            
-        result = '\n\n'.join(full_text)
-        safe_print(f"Extracted {len(result)} characters from EPUB.")
-        return result
-
-    except Exception as e:
-        raise ValueError(f"Lỗi khi đọc file EPUB: {str(e)}")
+from document_loader import load_document, extract_text_from_docx, extract_text_from_epub
 
 def analyze_document(file_bytes: bytes, mime_type: str, api_key: str = None, detail_level: str = "Tóm tắt", user_instructions: str = "") -> dict:
     """
