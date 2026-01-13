@@ -3,6 +3,7 @@ import os
 import json
 import time
 import random
+import concurrent.futures
 from google import genai
 from google.genai import types
 from document_loader import load_document
@@ -59,28 +60,18 @@ Yêu cầu:
 4. Đảm bảo JSON hợp lệ.
 """
 
-# New Prompts for Deep Dive
-PROMPT_1_STRUCTURE = """I have uploaded a document. I need to create a comprehensive, deep-dive summary of this book. First, please analyze the entire document and provide a detailed table of contents, including all chapters and major sub-sections. For each chapter, provide a brief 2-sentence description of its primary objective. After providing this outline, wait for my instruction to start the detailed summarization. Note: Please output in Vietnamese."""
+# New Prompts for Deep Dive (Single Shot)
+PROMPT_DEEP_DIVE_FULL = """
+Please analyze the attached document and provide a comprehensive Deep Dive Summary.
+Output the result strictly as a valid JSON object with the following keys:
 
-PROMPT_2_DETAILS = """Now, please provide a highly detailed summary for ALL CHAPTERS.
-Requirements:
-Length: Detailed and comprehensive.
-Content: Do not just list bullet points. Elaborate on the author’s arguments, include specific case studies, examples, and data mentioned in the text.
-Format: Use clear headings, sub-headings, and bold key concepts. Use nested bullet points for complex explanations.
-Tone: Maintain a professional and analytical tone, capturing the nuance of the author's original message.
-Language: Vietnamese.
-"""
+1. "structure": A detailed table of contents with 2-sentence descriptions for each chapter.
+2. "details": A highly detailed, chapter-by-chapter summary. Elaborate on arguments, case studies, and examples. Use markdown formatting (headings, bullets) within the string.
+3. "synthesis": A synthesis section covering Core Framework, Critical Analysis, Actionable Insights (10 items), and Glossary.
+4. "executive_overview": A final Executive Overview (approx. 1000 words) connecting all themes.
 
-PROMPT_3_SYNTHESIS = """Based on the entire document, please provide a comprehensive synthesis section (approx. 3 pages) that covers:
-Core Framework: A detailed breakdown of the central methodology or philosophy proposed by the author.
-Critical Analysis: Strengths and potential weaknesses of the author's arguments.
-Actionable Insights: A list of 10 high-impact takeaways that can be applied in real-world scenarios.
-Glossary: Define the key technical terms or unique vocabulary used throughout the book.
 Language: Vietnamese.
-"""
-
-PROMPT_4_FINAL = """Please review the previous summaries and provide a 'Final Executive Overview' (approx. 1,000 words) that connects all the themes discussed. Ensure this overview serves as a high-level bridge for a reader who needs to understand the overarching narrative of the book without losing the technical depth.
-Language: Vietnamese.
+Ensure the JSON is valid. Do not use markdown code blocks for the JSON output if possible, just the raw JSON string.
 """
 
 def robust_json_parse(text):
@@ -323,37 +314,12 @@ def summarize_book_deep_dive(file_bytes: bytes, mime_type: str, api_key: str = N
 
     client = genai.Client(api_key=key)
     models_to_try = [
-        "gemini-2.0-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-3-flash-preview",
-        "gemini-flash-latest"
+        "gemini-3.0-pro",   # Priority 1: Ultimate Model (2026)
+        "gemini-3.0-flash", # Priority 2: Newest Flash
+        "gemini-2.0-flash", # Priority 3: Previous Gen
+        "gemini-1.5-pro",   # Priority 4: Old Pro
+        "gemini-2.0-flash-lite"
     ]
-
-    chat = None
-    used_model = None
-
-    for model_name in models_to_try:
-        try:
-            print(f"Initializing Chat with model: {model_name}...")
-            chat = client.chats.create(model=model_name)
-            # Test a quick ping or just proceed. The first sendMessage will reveal if it works.
-            # But we can't easily 'switch' mid-conversation if step 2 fails. 
-            # So we just pick one that starts successfully.
-            # Applying a start-up check might be good, but expensive.
-            # Let's just proceed with the first one that works for the first step, 
-            # and if it fails mid-way, well, deep dive is hard to resume.
-            # We will rely on the retry logic for the chosen model.
-            used_model = model_name
-            break
-        except Exception as e:
-            print(f"Model {model_name} failed to init: {e}")
-            continue
-    
-    if not chat:
-        raise ValueError("Could not initialize chat with any model.")
-    
-    print(f"Using model: {used_model}")
-
     # Prepare Context
     parts = []
     if mime_type == "application/pdf":
@@ -368,50 +334,70 @@ def summarize_book_deep_dive(file_bytes: bytes, mime_type: str, api_key: str = N
         text_content = load_document(file_bytes, mime_type)
         parts.append(types.Part.from_text(text=f"Content:\n{text_content}"))
 
-    # Initial Prompt (Prompt 1)
-    parts.append(types.Part.from_text(text=PROMPT_1_STRUCTURE))
+    # Add the single shot prompt
+    parts.append(types.Part.from_text(text=PROMPT_DEEP_DIVE_FULL))
+
+    # Retry Logic with Model Fallback
+    response_text = ""
     
-    def send_message_with_retry(content, retries=10, initial_delay=2):
-        for attempt in range(retries):
+    for model_name in models_to_try:
+        print(f"Trying Deep Dive with model: {model_name}...")
+        
+        # Internal Retry for specific model (Rate Limits)
+        model_retries = 3 # Reduce retries per model to failover faster
+        initial_delay = 4
+        
+        success = False
+        for attempt in range(model_retries):
             try:
-                # print(f"Sending message (Attempt {attempt+1})...")
-                return chat.send_message(content)
+                # Generate Content
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[types.Content(role="user", parts=parts)],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.5
+                    )
+                )
+                if response.text:
+                    response_text = response.text
+                    print(f"Success with {model_name}.")
+                    success = True
+                    break
             except Exception as e:
                 error_str = str(e)
                 if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                    delay = initial_delay * (1.5 ** attempt) # Slower backoff
-                    print(f"Rate limit hit. Retrying in {delay:.1f}s...")
+                    delay = initial_delay * (2 ** attempt)
+                    print(f"[{model_name}] Rate limit hit. Retrying in {delay:.1f}s...")
                     time.sleep(delay)
+                elif "NOT_FOUND" in error_str:
+                     print(f"[{model_name}] Model not found. Skipping.")
+                     break # Stop retrying this model, move to next
                 else:
-                    raise e
-        raise ValueError("Exceeded maximum retries due to rate limits.")
+                    print(f"[{model_name}] Error: {e}")
+                    # For other errors (overloaded, internal), try next attempt or next model
+                    time.sleep(2)
+        
+        if success:
+            break
+            
+    if not response_text:
+        raise ValueError("Failed to retrieve response from all available Gemini models.")
 
-    # Step 1: Structure
-    print("Step 1/4: Analyzing Structure...")
-    resp1 = send_message_with_retry(parts)
-    structure_text = resp1.text
+    # Parse JSON
+    try:
+        data = robust_json_parse(response_text)
+    except Exception as e:
+        print(f"JSON Parsing Failed: {e}")
+        print("Raw Output:", response_text[:200])
+        raise ValueError("Could not parse Deep Dive JSON response.")
 
-    # Step 2: Deep Dive Details
-    print("Step 2/4: Generating Detailed Content...")
-    resp2 = send_message_with_retry(PROMPT_2_DETAILS)
-    details_text = resp2.text
-
-    # Step 3: Synthesis
-    print("Step 3/4: Synthesizing...")
-    resp3 = send_message_with_retry(PROMPT_3_SYNTHESIS)
-    synthesis_text = resp3.text
-
-    # Step 4: Final Overview
-    print("Step 4/4: Finalizing Executive Overview...")
-    resp4 = send_message_with_retry(PROMPT_4_FINAL)
-    final_text = resp4.text
-    
     print("Deep Dive Completed.")
     return {
         "mode": "deep_dive",
-        "structure": structure_text,
-        "details": details_text,
-        "synthesis": synthesis_text,
-        "executive_overview": final_text
+        "structure": data.get("structure", "N/A"),
+        "details": data.get("details", "N/A"),
+        "synthesis": data.get("synthesis", "N/A"),
+        "executive_overview": data.get("executive_overview", "N/A")
     }
 
