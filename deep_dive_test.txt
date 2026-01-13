@@ -1,0 +1,29 @@
+
+    INTELLIGENT AGENTS: A MODERN APPROACH
+    
+    Chapter 1: Introduction to Agents
+    Agents are systems that perceive their environment and act upon it. An agent structure includes sensors, actuators, and the agent program.
+    Rational agents strive to maximize their performance measure.
+    
+    Chapter 2: Problem Solving
+    Problem solving agents use search algorithms to find sequences of actions that reach a goal.
+    Uninformed search strategies (BFS, DFS) have no info about cost to goal.
+    Informed search (A*, Greedy) use heuristics.
+    
+    Chapter 3: Knowledge Representation
+    Logic is the primary vehicle for representing knowledge. Propositional logic is simple but limited. First-order logic allows objects and relations.
+    Ontologies categorize the world.
+    
+    Chapter 4: Planning
+    Planning agents use specific representations of states and actions. PDDL is a common language.
+    Partial order planning vs Total order planning.
+    
+    Chapter 5: Artificial Neural Networks
+    Perceptrons are the basic building blocks. Multi-layer perceptrons can approximate any function.
+    Backpropagation is the key learning algorithm.
+    Deep learning revolution changed the landscape with CNNs, RNNs, and Transformers.
+    
+    Chapter 6: Impact on Society
+    AI safety, ethics, and bias are critical modern concerns.
+    Automation and the workforce.
+    

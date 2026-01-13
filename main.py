@@ -11,7 +11,7 @@ from dataclasses import field
 from dotenv import load_dotenv
 from ai_engine import analyze_document
 from slide_engine import create_pptx
-from summarizer import summarize_document, save_summary_to_pdf
+from summarizer import summarize_document, save_summary_to_pdf, summarize_book_deep_dive
 
 
 load_dotenv()
@@ -106,12 +106,21 @@ def generate_summary(e: me.ClickEvent):
         # 1. Summarize
         api_key_env = os.environ.get("GOOGLE_API_KEY")
         
-        summary_data = summarize_document(
-            state.uploaded_file_bytes, 
-            state.uploaded_mime_type, 
-            api_key=api_key_env,
-            user_instructions=state.user_instructions
-        )
+        if state.is_detailed:
+            state.logs.append("Đang chạy chế độ Deep Dive (4 bước)... Quá trình này có thể mất vài phút.")
+            yield # Update UI
+            summary_data = summarize_book_deep_dive(
+                state.uploaded_file_bytes,
+                state.uploaded_mime_type,
+                api_key=api_key_env
+            )
+        else:
+            summary_data = summarize_document(
+                state.uploaded_file_bytes, 
+                state.uploaded_mime_type, 
+                api_key=api_key_env,
+                user_instructions=state.user_instructions
+            )
         
         state.logs.append("Tóm tắt hoàn tất. Đang tạo file PDF...")
         state.processing_status = "generating_pdf"

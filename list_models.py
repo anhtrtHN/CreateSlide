@@ -1,20 +1,21 @@
 import os
-from google import genai
 from dotenv import load_dotenv
+from google import genai
+import sys
 
 load_dotenv()
+api_key = os.environ.get("GOOGLE_API_KEY")
 
-key = os.environ.get("GOOGLE_API_KEY")
-if not key:
+if not api_key:
     print("No API Key found")
-else:
-    try:
-        client = genai.Client(api_key=key)
-        print("Listing models...")
-        # The SDK usage might slightly differ, checking standard client methods
-        # Based on SDK docs (or general knowledge), usually client.models.list()
-        # But 'google-genai' SDK structure is client.models.list()
-        for m in client.models.list():
-            print(m.name)
-    except Exception as e:
-        print(f"Error: {e}")
+    sys.exit(1)
+
+client = genai.Client(api_key=api_key)
+
+print("Listing models...")
+try:
+    for m in client.models.list():
+        # Just print the name, assuming text generation is primary for flashes
+        print(f"Model: {m.name}")
+except Exception as e:
+    print(f"Error: {e}")
