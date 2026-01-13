@@ -12,6 +12,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import simpleSplit
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib import colors
+import re
 
 # Try to register a font that supports Vietnamese if possible
 # Typically Arial or Times New Roman. 
@@ -61,17 +66,55 @@ Yêu cầu:
 """
 
 # New Prompts for Deep Dive (Single Shot)
+# New Prompts for Deep Dive (Single Shot)
+# New Prompts for Deep Dive (Single Shot)
 PROMPT_DEEP_DIVE_FULL = """
-Please analyze the attached document and provide a comprehensive Deep Dive Summary.
-Output the result strictly as a valid JSON object with the following keys:
+Hãy đóng vai một "Người Sưu Tầm Trí Tuệ" (Wisdom Collector) và tạo ra bản tóm tắt sách theo phong cách "Big Ideas" đầy cảm hứng.
+Mục tiêu: Ngắn gọn, súc tích nhưng cực kỳ sâu sắc (More Wisdom in Less Time).
 
-1. "structure": A detailed table of contents with 2-sentence descriptions for each chapter.
-2. "details": A highly detailed, chapter-by-chapter summary. Elaborate on arguments, case studies, and examples. Use markdown formatting (headings, bullets) within the string.
-3. "synthesis": A synthesis section covering Core Framework, Critical Analysis, Actionable Insights (10 items), and Glossary.
-4. "executive_overview": A final Executive Overview (approx. 1000 words) connecting all themes.
+Bạn PHẢI trả về kết quả dưới dạng JSON hợp lệ với cấu trúc sau:
 
-Language: Vietnamese.
-Ensure the JSON is valid. Do not use markdown code blocks for the JSON output if possible, just the raw JSON string.
+{
+  "metadata": {
+    "title": "Tên sách",
+    "slogan": "Một câu slogan ngắn gọn hoặc mô tả thu hút về sách",
+    "author": "Tên tác giả"
+  },
+  "big_ideas": [
+    "Ý tưởng lớn 1 (3-5 từ, giật gân)",
+    "Ý tưởng lớn 2...",
+    ... (5-7 ý)"
+  ],
+  "introduction": {
+    "text": "Đoạn giới thiệu 100-150 từ. Bối cảnh, tầm quan trọng, giọng văn hào hứng.",
+    "best_quote": "Trích dẫn hay nhất hoặc bao quát nhất của cuốn sách"
+  },
+  "core_ideas": [
+    {
+      "title": "TÊN Ý TƯỞNG LỚN 1",
+      "quote": "Trích dẫn nguyên văn đắt giá nhất liên quan đến ý tưởng này.",
+      "commentary": "Phân tích chuyên sâu (200-300 từ): Đây là phần quan trọng nhất. Hãy viết thành một bài tiểu luận ngắn. 1. Giải thích cơ chế/nguyên lý của ý tưởng dưới góc độ khoa học/tâm lý học. 2. So sánh với các học thuyết khác. 3. Đưa ra ví dụ áp dụng cụ thể và các bẫy tư duy cần tránh. Tuyệt đối không viết sơ sài."
+    },
+    {
+      "title": "TÊN Ý TƯỞNG LỚN 2",
+      "quote": "...",
+      "commentary": "Phân tích logic, mở rộng vấn đề, đào sâu vào bản chất (First Principles)."
+    },
+    ... (Tạo khoảng 5-7 ý tưởng cốt lõi)
+    {
+      "title": "TÊN Ý TƯỞNG LỚN CUỐI CÙNG - HÀNH ĐỘNG",
+      "quote": "Trích dẫn về sự kiên trì/kỷ luật.",
+      "commentary": "Kêu gọi hành động mạnh mẽ."
+    }
+  ],
+  "about_author": "Tóm tắt tiểu sử tác giả ngắn gọn.",
+  "about_creator": "SlideGenius AI: Chúng tôi cam kết chắt lọc những tinh hoa tri thức để giúp bạn tiết kiệm thời gian."
+}
+
+LƯU Ý:
+- Ngôn ngữ: Tiếng Việt (trừ các tên riêng).
+- Giọng văn: Truyền cảm hứng, sâu sắc, trực diện.
+- JSON: Không được lỗi cú pháp.
 """
 
 def robust_json_parse(text):
@@ -189,48 +232,201 @@ def save_summary_to_pdf(summary_data: dict, output_filename: str = "summary.pdf"
             c.setFont(font_name, font_size)
         return current_y
 
+    # Helper for basic Markdown -> ReportLab XML
+    def markdown_to_xml(text):
+        if not isinstance(text, str):
+            import json
+            text = json.dumps(text, ensure_ascii=False)
+        
+        # Escape basic XML chars first
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
+        # Replace **bold** with <b>bold</b>
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+        
+        # Replace ## Headings with bold and breaks
+        text = re.sub(r'##\s*(.*?)\n', r'<b>\1</b><br/>', text)
+        
+        # Replace lists
+        lines = text.split('\n')
+        processed_lines = []
+        for line in lines:
+            line = line.strip()
+            if line.startswith("- "):
+                 processed_lines.append(f"&bull; {line[2:]}<br/>")
+            elif line.startswith("* "): # alternative bullet
+                 processed_lines.append(f"&bull; {line[2:]}<br/>")
+            else:
+                 processed_lines.append(line)
+        
+        return "<br/>".join(processed_lines)
+
     # Check for Deep Dive Mode
     if summary_data.get("mode") == "deep_dive":
-        # 1. Title Page (Simple)
-        c.setFont(title_font, 24)
-        c.drawCentredString(width/2, height/2 + 50, "DEEP DIVE BOOK SUMMARY")
-        c.setFont(body_font, 14)
-        c.drawCentredString(width/2, height/2, "Generated by SlideGenius AI")
-        c.showPage()
-        y = height - header_margin
-
-        sections = [
-            ("Executive Overview", summary_data.get("executive_overview", "")),
-            ("Structure & Outline", summary_data.get("structure", "")),
-            ("Detailed Chapter Summaries", summary_data.get("details", "")),
-            ("Synthesis & Analysis", summary_data.get("synthesis", ""))
-        ]
-
-        text_width = width - 2 * margin
+        doc = SimpleDocTemplate(
+            output_filename, 
+            pagesize=A4,
+            rightMargin=50, leftMargin=50, 
+            topMargin=50, bottomMargin=50
+        )
         
-        for sec_title, sec_content in sections:
-            # Section Header
-            y = check_page_break(y, title_font, 18)
-            c.setFont(title_font, 18)
-            c.drawString(margin, y, sec_title.upper())
-            y -= 30
+        styles = getSampleStyleSheet()
+        # Custom Styles
+        title_style = ParagraphStyle(
+            'CustomTitle', 
+            parent=styles['Title'], 
+            fontName='Arial', 
+            fontSize=26, 
+            spaceAfter=12,
+            alignment=TA_CENTER,
+            textColor=colors.darkblue
+        )
+        slogan_style = ParagraphStyle(
+            'CustomSlogan', 
+            parent=styles['Normal'],
+            fontName='Arial',
+            fontSize=14,
+            spaceAfter=24,
+            alignment=TA_CENTER,
+            textColor=colors.grey
+        )
+        header_style = ParagraphStyle(
+            'CustomHeader', 
+            parent=styles['Heading1'], 
+            fontName='Arial', 
+            fontSize=16, 
+            spaceBefore=12, 
+            spaceAfter=12,
+            textColor=colors.black,
+            borderPadding=5,
+            backColor=colors.lightgrey
+        )
+        quote_style = ParagraphStyle(
+            'CustomQuote', 
+            parent=styles['Normal'], 
+            fontName='Arial', 
+            fontSize=12, 
+            leading=18,
+            leftIndent=20,
+            rightIndent=20,
+            spaceBefore=6,
+            spaceAfter=6,
+            textColor=colors.darkgreen,
+            fontName_Italic='Arial',
+            alignment=TA_JUSTIFY
+        )
+        body_style = ParagraphStyle(
+            'CustomBody', 
+            parent=styles['Normal'], 
+            fontName='Arial', 
+            fontSize=12, 
+            leading=18, 
+            spaceAfter=8,
+            alignment=TA_JUSTIFY
+        )
+        
+        from reportlab.platypus import KeepTogether
+
+        story = []
+        
+        metadata = summary_data.get("metadata", {})
+        doc_title = metadata.get("title", "BOOK SUMMARY")
+        doc_author = metadata.get("author", "Unknown Author")
+        doc_slogan = metadata.get("slogan", "More Wisdom in Less Time")
+        
+        # --- TITLE PAGE ---
+        story.append(Spacer(1, 30))
+        story.append(Paragraph("TUAN ANH'S NOTES", 
+            ParagraphStyle('Brand', parent=styles['Normal'], alignment=TA_CENTER, fontSize=10, textColor=colors.grey)))
+        story.append(Paragraph("More Wisdom in Less Time", 
+            ParagraphStyle('SubBrand', parent=styles['Normal'], alignment=TA_CENTER, fontSize=8, textColor=colors.grey)))
+        story.append(Spacer(1, 15))
+        
+        story.append(Paragraph(doc_title.upper(), title_style))
+        story.append(Paragraph(doc_slogan, slogan_style))
+        story.append(Paragraph(f"<b>By {doc_author}</b>", 
+            ParagraphStyle('Author', parent=body_style, alignment=TA_CENTER, fontSize=12)))
+        story.append(Spacer(1, 15))
+        story.append(Paragraph("---", ParagraphStyle('Line', parent=body_style, alignment=TA_CENTER)))
+        
+        # --- THE BIG IDEAS ---
+        story.append(Paragraph("THE BIG IDEAS (CÁC Ý TƯỞNG LỚN)", header_style))
+        big_ideas = summary_data.get("big_ideas", [])
+        if isinstance(big_ideas, list):
+            for idea in big_ideas:
+                story.append(Paragraph(f"&bull; <b>{idea}</b>", body_style))
+        story.append(Spacer(1, 15))
+        story.append(Paragraph("---", ParagraphStyle('Line', parent=body_style, alignment=TA_CENTER)))
+        
+        # --- INTRODUCTION ---
+        intro_data = summary_data.get("introduction", {})
+        story.append(Paragraph("GIỚI THIỆU", header_style))
+        if intro_data.get("text"):
+             story.append(Paragraph(intro_data["text"], body_style))
+        
+        if intro_data.get("best_quote"):
+             story.append(Spacer(1, 8))
+             story.append(Paragraph(f"<i>“{intro_data['best_quote']}”</i>", quote_style))
+             story.append(Paragraph(f"— {doc_author}", 
+                ParagraphStyle('QuoteAuthor', parent=body_style, alignment=TA_RIGHT, fontSize=10)))
+
+        story.append(PageBreak())
+
+        # --- CORE IDEAS ---
+        core_ideas = summary_data.get("core_ideas", [])
+        for idea in core_ideas:
+            elements = []
+            title = idea.get("title", "BIG IDEA")
+            quote = idea.get("quote", "")
+            commentary = idea.get("commentary", "")
             
-            # Content (Assuming Markdown-like text, but we treat as plain for now or remove basic markdown symbols)
-            # Remove ```json ... ``` blocks if any leftovers, though here we get raw text
-            clean_content = sec_content.replace("**", "").replace("##", "") 
+            elements.append(Paragraph(title.upper(), 
+                ParagraphStyle('IdeaTitle', parent=styles['Heading2'], fontName='Arial', fontSize=14, spaceBefore=6, textColor=colors.darkblue)))
             
-            c.setFont(body_font, 12)
-            lines = simpleSplit(clean_content, body_font, 12, text_width)
+            if quote:
+                elements.append(Paragraph(f"<i>“{quote}”</i>", quote_style))
             
-            for line in lines:
-                y = check_page_break(y, body_font, 12)
-                c.drawString(margin, y, line)
-                y -= 18
+            if commentary:
+                elements.append(Paragraph("<b>Comment:</b>", 
+                    ParagraphStyle('AIHeader', parent=body_style, fontSize=10, textColor=colors.black, spaceBefore=4)))
+                # Render HTML/XML formatting in commentary
+                xml_commentary = markdown_to_xml(commentary)
+                elements.append(Paragraph(xml_commentary, body_style))
+                
+            elements.append(Spacer(1, 10))
+            elements.append(Paragraph("---", ParagraphStyle('Line', parent=body_style, alignment=TA_CENTER)))
+            elements.append(Spacer(1, 10))
             
-            y -= 30 # Spacing between sections
+            # Keep idea block together so it doesn't break awkwardly
+            story.append(KeepTogether(elements))
+
+        story.append(PageBreak())
+
+        # --- ABOUT AUTHOR & CREATOR ---
+        story.append(Paragraph("ABOUT THE AUTHOR (VỀ TÁC GIẢ)", header_style))
+        story.append(Paragraph(summary_data.get("about_author", ""), body_style))
+        story.append(Spacer(1, 20))
+        
+        story.append(Paragraph("ABOUT THE NOTE CREATOR (VỀ NGƯỜI TẠO NOTE)", header_style))
+        story.append(Paragraph(summary_data.get("about_creator", ""), body_style))
+
+        # --- FOOTER FUNCTION ---
+        def add_footer(canvas, doc):
+            canvas.saveState()
+            canvas.setFont('Arial', 9)
+            canvas.setFillColor(colors.grey)
             
-        draw_footer()
-        c.save()
+            # Left Footer: Copyright
+            canvas.drawString(50, 20, "© 2026 Truong Tuan Anh | Document Summary")
+            
+            # Right Footer: Page Number
+            page_num_text = f"Page {doc.page}"
+            canvas.drawRightString(A4[0] - 50, 20, page_num_text)
+            
+            canvas.restoreState()
+
+        # Build PDF with Footer
+        doc.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
         return os.path.abspath(output_filename)
 
     # Standard JSON Mode Rendering (Existing Code below...)
@@ -313,13 +509,20 @@ def summarize_book_deep_dive(file_bytes: bytes, mime_type: str, api_key: str = N
         raise ValueError("Missing API Key.")
 
     client = genai.Client(api_key=key)
-    models_to_try = [
-        "gemini-3.0-pro",   # Priority 1: Ultimate Model (2026)
-        "gemini-3.0-flash", # Priority 2: Newest Flash
-        "gemini-2.0-flash", # Priority 3: Previous Gen
-        "gemini-1.5-pro",   # Priority 4: Old Pro
-        "gemini-2.0-flash-lite"
+    
+    # 1. Extensive Model List (Copied from ai_engine.py for consistency)
+    base_models = [
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash", 
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+         # Fallbacks
+        "gemini-2.0-flash-lite",
+        "gemini-2.0-flash",
     ]
+    models_to_try = base_models + ["gemini-flash-latest", "gemini-pro-latest"]
     # Prepare Context
     parts = []
     if mime_type == "application/pdf":
@@ -337,52 +540,55 @@ def summarize_book_deep_dive(file_bytes: bytes, mime_type: str, api_key: str = N
     # Add the single shot prompt
     parts.append(types.Part.from_text(text=PROMPT_DEEP_DIVE_FULL))
 
-    # Retry Logic with Model Fallback
+    # Retry Logic with Fast Failover (inspired by ai_engine.py)
     response_text = ""
-    
+    retry_count = 0
+    success = False
+
     for model_name in models_to_try:
-        print(f"Trying Deep Dive with model: {model_name}...")
-        
-        # Internal Retry for specific model (Rate Limits)
-        model_retries = 3 # Reduce retries per model to failover faster
-        initial_delay = 4
-        
-        success = False
-        for attempt in range(model_retries):
-            try:
-                # Generate Content
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[types.Content(role="user", parts=parts)],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.5
-                    )
-                )
-                if response.text:
-                    response_text = response.text
-                    print(f"Success with {model_name}.")
-                    success = True
-                    break
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                    delay = initial_delay * (2 ** attempt)
-                    print(f"[{model_name}] Rate limit hit. Retrying in {delay:.1f}s...")
-                    time.sleep(delay)
-                elif "NOT_FOUND" in error_str:
-                     print(f"[{model_name}] Model not found. Skipping.")
-                     break # Stop retrying this model, move to next
-                else:
-                    print(f"[{model_name}] Error: {e}")
-                    # For other errors (overloaded, internal), try next attempt or next model
-                    time.sleep(2)
-        
-        if success:
-            break
+        try:
+            print(f"Trying Deep Dive with model: {model_name}...")
             
-    if not response_text:
-        raise ValueError("Failed to retrieve response from all available Gemini models.")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.5
+                )
+            )
+            
+            if response.text:
+                response_text = response.text
+                print(f"Success with {model_name}.")
+                success = True
+                break
+                
+        except Exception as e:
+            error_str = str(e)
+            
+            # Handling Rate Limits (429) & Resource Exhausted -> FAIL FAST & TRY NEXT
+            if "RESOURCE_EXHAUSTED" in error_str or "429" in error_str:
+                if "limit: 0" in error_str:
+                     print(f"[{model_name}] Limit 0 (No Quota). Skipping...")
+                     continue
+
+                retry_count += 1
+                wait_time = min(10, (1.5 ** retry_count)) 
+                print(f"[{model_name}] Quota exceeded. Waiting {wait_time:.1f}s then trying NEXT model...")
+                time.sleep(wait_time)
+                continue # Skip to next model
+            
+            elif "NOT_FOUND" in error_str or "404" in error_str:
+                 print(f"[{model_name}] Not found. Skipping...")
+                 continue
+            
+            else:
+                print(f"[{model_name}] Error: {str(e)}. Skipping...")
+                continue
+        
+    if not success or not response_text:
+        raise ValueError("Failed to retrieve response from all available Gemini models (Deep Dive).")
 
     # Parse JSON
     try:
@@ -395,9 +601,12 @@ def summarize_book_deep_dive(file_bytes: bytes, mime_type: str, api_key: str = N
     print("Deep Dive Completed.")
     return {
         "mode": "deep_dive",
-        "structure": data.get("structure", "N/A"),
-        "details": data.get("details", "N/A"),
-        "synthesis": data.get("synthesis", "N/A"),
-        "executive_overview": data.get("executive_overview", "N/A")
+        "metadata": data.get("metadata", {}),
+        "big_ideas": data.get("big_ideas", []),
+        "introduction": data.get("introduction", {}),
+        "core_ideas": data.get("core_ideas", []),
+        "about_author": data.get("about_author", ""),
+        "about_creator": data.get("about_creator", ""),
+        "used_model": model_name 
     }
 

@@ -114,6 +114,8 @@ def generate_summary(e: me.ClickEvent):
                 state.uploaded_mime_type,
                 api_key=api_key_env
             )
+            if "used_model" in summary_data:
+                 state.logs.append(f"Model used: {summary_data['used_model']}")
         else:
             summary_data = summarize_document(
                 state.uploaded_file_bytes, 

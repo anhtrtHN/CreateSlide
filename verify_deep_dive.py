@@ -64,10 +64,20 @@ def verify_deep_dive():
         summary_data = summarize_book_deep_dive(file_bytes, mime_type)
         
         print("\n--- Deep Dive Data Received ---")
+        # Updated to check for Big Ideas Template keys
+        required_keys = ["big_ideas", "introduction", "core_ideas", "about_author", "about_creator"]
+        if not all(key in summary_data for key in required_keys):
+            print("FAILED: Missing one or more required keys in Deep Dive response.")
+            print(f"Keys found: {list(summary_data.keys())}")
+            return
+        
+        if "metadata" not in summary_data:
+            print("WARNING: 'metadata' key missing from response (Model ignored prompt). Using fallback.")
+            
         print("Keys:", list(summary_data.keys()))
         print("Mode:", summary_data.get("mode"))
-        print("Overview Length:", len(summary_data.get("executive_overview", "")))
-        print("Details Length:", len(summary_data.get("details", "")))
+        print("Big Ideas Count:", len(summary_data.get("big_ideas", [])))
+        print("Core Ideas Count:", len(summary_data.get("core_ideas", [])))
         
         if summary_data.get("mode") != "deep_dive":
              print("FAILED: Mode incorrect.")
